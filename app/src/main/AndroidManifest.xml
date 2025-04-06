@@ -1,29 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Required permissions for WiFi and network operations -->
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.multiwifi.connector">
+
+    <!-- WiFi and network permissions -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
-    
-    <!-- Location permission needed for WiFi scanning on Android 9+ -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     
-    <!-- For Android 10+ background WiFi scanning -->
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
-    
-    <!-- For foreground service to maintain connections -->
+    <!-- VPN service permission -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     
     <application
         android:allowBackup="true"
-        android:icon="@android:drawable/sym_def_app_icon"
+        android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
         
-        <!-- Splash screen as entry point -->
         <activity
             android:name=".SplashActivity"
             android:exported="true"
@@ -34,25 +31,46 @@
             </intent-filter>
         </activity>
         
-        <!-- Main activity -->
-        <activity
-            android:name=".MainActivity"
-            android:exported="false" />
-            
-        <!-- Onboarding activity -->
         <activity
             android:name=".OnboardingActivity"
-            android:exported="false" />
+            android:theme="@style/AppTheme.NoActionBar" />
             
-        <!-- Dashboard activity -->
+        <activity
+            android:name=".MainActivity"
+            android:theme="@style/AppTheme" />
+            
         <activity
             android:name=".DashboardActivity"
-            android:exported="false" />
+            android:theme="@style/AppTheme" />
             
-        <!-- Multi-WiFi Service -->
+        <activity
+            android:name=".NetworkRecommendationActivity"
+            android:theme="@style/AppTheme"
+            android:label="@string/network_recommendation_title" />
+            
+        <activity
+            android:name=".NetworkVisualizerActivity"
+            android:theme="@style/AppTheme"
+            android:label="@string/network_visualizer_title" />
+            
+        <activity
+            android:name=".NetworkSwitchWizardActivity"
+            android:theme="@style/AppTheme"
+            android:label="@string/network_switch_title" />
+            
         <service
             android:name=".service.MultiWifiService"
+            android:foregroundServiceType="connectedDevice"
             android:enabled="true"
             android:exported="false" />
+            
+        <service
+            android:name=".service.MultiWifiVpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

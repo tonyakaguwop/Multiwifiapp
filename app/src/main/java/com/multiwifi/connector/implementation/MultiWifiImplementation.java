@@ -1,65 +1,75 @@
 package com.multiwifi.connector.implementation;
 
+import android.content.Context;
+
 import com.multiwifi.connector.model.NetworkConnection;
+
 import java.util.List;
 
 /**
- * Interface for different multi-WiFi implementations
+ * Interface for different multi-WiFi connection implementations
  */
 public interface MultiWifiImplementation {
-    
     /**
-     * Initialize the implementation
+     * Initializes the implementation
+     * 
+     * @param context The application context
+     * @return true if initialization was successful, false otherwise
      */
-    boolean initialize();
+    boolean initialize(Context context);
     
     /**
-     * Connect to multiple networks
-     */
-    boolean connect();
-    
-    /**
-     * Disconnect from all networks
-     */
-    boolean disconnect();
-    
-    /**
-     * Check if currently connected
-     */
-    boolean isConnected();
-    
-    /**
-     * Scan for available networks
+     * Scans for available networks
+     * 
+     * @return List of available networks
      */
     List<NetworkConnection> scanNetworks();
     
     /**
-     * Get list of currently connected networks
+     * Connects to multiple networks
+     * 
+     * @param networks List of networks to connect to
+     * @return true if connection process was initiated successfully, false otherwise
+     */
+    boolean connectToNetworks(List<NetworkConnection> networks);
+    
+    /**
+     * Disconnects from all networks
+     * 
+     * @return true if disconnection was successful, false otherwise
+     */
+    boolean disconnectAll();
+    
+    /**
+     * Gets the combined speed of all connected networks
+     * 
+     * @return Combined speed in Mbps
+     */
+    double getCombinedSpeed();
+    
+    /**
+     * Gets the status of the implementation
+     * 
+     * @return true if connected, false otherwise
+     */
+    boolean isConnected();
+    
+    /**
+     * Gets currently connected networks
+     * 
+     * @return List of connected networks
      */
     List<NetworkConnection> getConnectedNetworks();
     
     /**
-     * Add a specific network
+     * Updates the allocation percentages for the networks
+     * 
+     * @param networks List of networks with updated allocation percentages
      */
-    boolean addNetwork(String ssid, String password);
+    void updateAllocation(List<NetworkConnection> networks);
     
     /**
-     * Remove a specific network
-     */
-    boolean removeNetwork(String ssid);
-    
-    /**
-     * Get combined connection speed in Mbps
-     */
-    float getCombinedSpeed();
-    
-    /**
-     * Update connection metrics
-     */
-    void updateMetrics();
-    
-    /**
-     * Release resources
+     * Cleans up resources used by the implementation
      */
     void cleanup();
 }

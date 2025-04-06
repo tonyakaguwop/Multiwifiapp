@@ -1,118 +1,128 @@
 package com.multiwifi.connector.util;
 
-import android.Manifest;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import com.multiwifi.connector.R;
+
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Utility class to handle runtime permissions
+ */
 public class PermissionHandler {
+    private static final String TAG = "PermissionHandler";
     
-    private final Context context;
-    
-    // Permissions needed for the app
-    private final String[] requiredPermissions = {
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.ACCESS_WIFI_STATE,
-            Manifest.permission.CHANGE_WIFI_STATE,
-            Manifest.permission.ACCESS_NETWORK_STATE,
-            Manifest.permission.INTERNET
-    };
-    
-    public PermissionHandler(Context context) {
-        this.context = context;
+    /**
+     * Interface for permission handling callbacks
+     */
+    public interface PermissionCallbacks {
+        void onPermissionsGranted(int requestCode, List<String> perms);
+        void onPermissionsDenied(int requestCode, List<String> perms);
     }
     
-    public boolean areAllPermissionsGranted() {
-        for (String permission : requiredPermissions) {
-            if (ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED) {
-                return false;
-            }
+    /**
+     * Checks if all given permissions are granted
+     * 
+     * @param context The context
+     * @param permissions The permissions to check
+     * @return true if all permissions are granted, false otherwise
+     */
+    public static boolean hasPermissions(Context context, String... permissions) {
+        if (context == null || permissions == null || permissions.length == 0) {
+            return true;
         }
         
-        // For Android 10+, check for background location if needed
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            return ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) 
-                    == PackageManager.PERMISSION_GRANTED;
+        for (String permission : permissions) {
+            if (ContextCompat.checkSelfPermission(context, permission) 
+                    != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
         }
         
         return true;
     }
     
-    public void requestRequiredPermissions(int requestCode) {
-        List<String> permissionsToRequest = new ArrayList<>();
+    /**
+     * Requests the given permissions
+     * 
+     * @param activity The activity
+     * @param requestCode The request code
+     * @param permissions The permissions to request
+     */
+    public static void requestPermissions(Activity activity, int requestCode, String... permissions) {
+        ActivityCompat.requestPermissions(activity, permissions, requestCode);
+    }
+    
+    /**
+     * Processes the permission request results
+     * 
+     * @param requestCode The request code
+     * @param permissions The permissions that were requested
+     * @param grantResults The grant results
+     * @param callbacks The callbacks
+     */
+    public static void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                                 @NonNull int[] grantResults, PermissionCallbacks callbacks) {
+        List<String> granted = new ArrayList<>();
+        List<String> denied = new ArrayList<>();
         
-        // Check each permission
-        for (String permission : requiredPermissions) {
-            if (ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(permission);
+        for (int i = 0; i < permissions.length; i++) {
+            String permission = permissions[i];
+            if (grantResults[i] == PackageManager.PERMISSION_GRANTED) {
+                granted.add(permission);
+            } else {
+                denied.add(permission);
             }
         }
         
-        // For Android 10+, request background location separately
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) 
-                    != PackageManager.PERMISSION_GRANTED) {
-                // Request initial permissions first, then request background location in a separate dialog
-                if (permissionsToRequest.isEmpty()) {
-                    requestBackgroundLocationPermission(requestCode);
-                }
-            }
+        if (!granted.isEmpty() && callbacks != null) {
+            callbacks.onPermissionsGranted(requestCode, granted);
         }
         
-        // Request permissions if any are needed
-        if (!permissionsToRequest.isEmpty()) {
-            ActivityCompat.requestPermissions(
-                    (Activity) context, 
-                    permissionsToRequest.toArray(new String[0]), 
-                    requestCode
-            );
+        if (!denied.isEmpty() && callbacks != null) {
+            callbacks.onPermissionsDenied(requestCode, denied);
         }
     }
     
-    private void requestBackgroundLocationPermission(int requestCode) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Show explanation dialog first
-            new AlertDialog.Builder(context)
-                    .setTitle(R.string.background_location_title)
-                    .setMessage(R.string.background_location_message)
-                    .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                        // Request the permission
-                        ActivityCompat.requestPermissions(
-                                (Activity) context,
-                                new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION},
-                                requestCode
-                        );
-                    })
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .create()
-                    .show();
+    /**
+     * Checks if rationale should be shown for the given permissions
+     * 
+     * @param activity The activity
+     * @param permissions The permissions to check
+     * @return true if rationale should be shown for at least one permission, false otherwise
+     */
+    public static boolean shouldShowRationale(Activity activity, String... permissions) {
+        for (String permission : permissions) {
+            if (ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)) {
+                return true;
+            }
         }
+        return false;
     }
     
-    public void showPermissionExplanationDialog() {
-        new AlertDialog.Builder(context)
-                .setTitle(R.string.permissions_required_title)
-                .setMessage(R.string.permissions_required_settings_message)
-                .setPositiveButton(R.string.go_to_settings, (dialog, which) -> {
-                    // Open app settings
-                    Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
-                    Uri uri = Uri.fromParts("package", context.getPackageName(), null);
-                    intent.setData(uri);
-                    context.startActivity(intent);
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .create()
-                .show();
+    /**
+     * Opens the app settings
+     * 
+     * @param context The context
+     */
+    public static void openAppSettings(Context context) {
+        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+        Uri uri = Uri.fromParts("package", context.getPackageName(), null);
+        intent.setData(uri);
+        if (intent.resolveActivity(context.getPackageManager()) != null) {
+            context.startActivity(intent);
+        } else {
+            Log.e(TAG, "No activity found to handle app settings intent");
+        }
     }
 }

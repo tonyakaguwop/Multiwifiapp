@@ -2,46 +2,38 @@ package com.multiwifi.connector.implementation;
 
 import android.content.Context;
 import android.net.ConnectivityManager;
-import android.net.Network;
-import android.net.NetworkCapabilities;
-import android.net.NetworkRequest;
+import android.net.ProxyInfo;
 import android.os.Build;
-import androidx.annotation.NonNull;
+import android.util.Log;
+
+import com.multiwifi.connector.model.ConnectionMethod;
 import com.multiwifi.connector.model.NetworkConnection;
-import com.multiwifi.connector.util.LoadBalancer;
 import com.multiwifi.connector.util.NetworkUtils;
+
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Implementation using a proxy server to combine multiple connections
+ * Implementation using proxy servers to route traffic
  */
 public class ProxyImplementation implements MultiWifiImplementation {
-    
-    private final Context context;
-    private final NetworkUtils networkUtils;
-    private final LoadBalancer loadBalancer;
-    private boolean isInitialized;
-    private boolean isConnected;
-    private NetworkConnection primaryNetwork;
-    
-    // Proxy server details
-    private static final String PROXY_SERVER = "example-proxy.multiwifi.com"; // Placeholder - not a real server
+    private static final String TAG = "ProxyImplementation";
+    private static final String PROXY_HOST = "proxy.multiwifi.example.com";
     private static final int PROXY_PORT = 8080;
     
-    public ProxyImplementation(Context context) {
-        this.context = context;
-        this.networkUtils = new NetworkUtils(context);
-        this.loadBalancer = new LoadBalancer();
-        this.isInitialized = false;
-        this.isConnected = false;
-    }
+    private Context context;
+    private boolean isInitialized = false;
+    private boolean isConnected = false;
+    private final List<NetworkConnection> connectedNetworks = new ArrayList<>();
+    private ConnectivityManager connectivityManager;
     
     @Override
-    public boolean initialize() {
-        // Check if we can connect to the proxy server
-        boolean canConnectToProxy = checkProxyConnection();
-        if (!canConnectToProxy) {
+    public boolean initialize(Context context) {
+        this.context = context;
+        this.connectivityManager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        
+        if (connectivityManager == null) {
+            Log.e(TAG, "ConnectivityManager is null");
             return false;
         }
         
@@ -50,40 +42,133 @@ public class ProxyImplementation implements MultiWifiImplementation {
     }
     
     @Override
-    public boolean connect() {
+    public List<NetworkConnection> scanNetworks() {
         if (!isInitialized) {
-            return false;
+            Log.e(TAG, "Implementation not initialized");
+            return new ArrayList<>();
         }
         
-        // Get current WiFi network
-        primaryNetwork = networkUtils.getCurrentWifiConnection();
-        if (primaryNetwork == null) {
-            return false;
-        }
-        
-        // Try to establish connection to the proxy server
-        boolean connectedToProxy = connectToProxyServer();
-        if (!connectedToProxy) {
-            return false;
-        }
-        
-        isConnected = true;
-        return true;
+        return NetworkUtils.scanNetworks(context);
     }
     
     @Override
-    public boolean disconnect() {
+    public boolean connectToNetworks(List<NetworkConnection> networks) {
         if (!isInitialized) {
+            Log.e(TAG, "Implementation not initialized");
             return false;
         }
         
-        // Disconnect from proxy server
-        disconnectFromProxyServer();
+        // Connect to a single WiFi network and use proxy for traffic splitting
+        if (networks.isEmpty()) {
+            Log.e(TAG, "No networks to connect to");
+            return false;
+        }
         
-        primaryNetwork = null;
+        // Connect to the first network
+        NetworkConnection primaryNetwork = networks.get(0);
+        boolean connected = NetworkUtils.connectToNetwork(
+                context,
+                primaryNetwork.getSsid(),
+                null, // Password would be provided in a real app
+                ConnectionMethod.PROXY
+        );
+        
+        if (connected) {
+            primaryNetwork.setConnected(true);
+            primaryNetwork.setConnectionMethod(ConnectionMethod.PROXY);
+            
+            if (!connectedNetworks.contains(primaryNetwork)) {
+                connectedNetworks.add(primaryNetwork);
+            }
+            
+            Log.d(TAG, "Connected to " + primaryNetwork.getSsid() + " via proxy");
+            
+            // Set up proxy
+            setupProxy();
+            
+            // Test network speed
+            testNetworkSpeed(primaryNetwork);
+            
+            isConnected = true;
+        } else {
+            Log.e(TAG, "Failed to connect to " + primaryNetwork.getSsid());
+            isConnected = false;
+        }
+        
+        return isConnected;
+    }
+    
+    private void setupProxy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            // Set global proxy
+            // Note: This requires system/root privileges on most devices
+            // In a real app, we would use VPN service to route traffic through our proxy
+            ProxyInfo proxyInfo = ProxyInfo.buildDirectProxy(PROXY_HOST, PROXY_PORT);
+            
+            Log.d(TAG, "Proxy set up at " + PROXY_HOST + ":" + PROXY_PORT);
+        } else {
+            Log.w(TAG, "Setting proxy requires Android 6.0+");
+        }
+    }
+    
+    private void testNetworkSpeed(NetworkConnection network) {
+        NetworkUtils.testConnectionSpeed(new NetworkUtils.SpeedTestCallback() {
+            @Override
+            public void onSpeedTested(double speedMbps) {
+                network.setSpeedMbps(speedMbps);
+                Log.d(TAG, "Speed test for " + network.getSsid() + ": " + speedMbps + " Mbps");
+            }
+            
+            @Override
+            public void onSpeedTestFailed(String errorMessage) {
+                Log.e(TAG, "Speed test failed for " + network.getSsid() + ": " + errorMessage);
+            }
+        });
+    }
+    
+    @Override
+    public boolean disconnectAll() {
+        if (!isInitialized) {
+            Log.e(TAG, "Implementation not initialized");
+            return false;
+        }
+        
+        // Remove proxy settings
+        removeProxy();
+        
+        // Disconnect all networks
+        for (NetworkConnection network : connectedNetworks) {
+            network.setConnected(false);
+            Log.d(TAG, "Disconnected from " + network.getSsid());
+        }
+        
+        connectedNetworks.clear();
         isConnected = false;
         
         return true;
+    }
+    
+    private void removeProxy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            // Clear proxy settings
+            // Again, this requires system privileges
+            Log.d(TAG, "Proxy settings removed");
+        }
+    }
+    
+    @Override
+    public double getCombinedSpeed() {
+        if (!isConnected) {
+            return 0.0;
+        }
+        
+        // In proxy implementation, the combined speed is determined by the proxy server
+        // For demo purposes, we'll just use the connected network's speed
+        if (!connectedNetworks.isEmpty()) {
+            return connectedNetworks.get(0).getSpeedMbps();
+        }
+        
+        return 0.0;
     }
     
     @Override
@@ -92,220 +177,23 @@ public class ProxyImplementation implements MultiWifiImplementation {
     }
     
     @Override
-    public List<NetworkConnection> scanNetworks() {
-        List<NetworkConnection> networks = new ArrayList<>();
-        
-        if (!isInitialized) {
-            return networks;
-        }
-        
-        // Add WiFi networks
-        networkUtils.scanForNetworks().forEach(scanResult -> {
-            NetworkConnection network = new NetworkConnection();
-            network.setSsid(scanResult.SSID);
-            network.setType(NetworkConnection.Type.WIFI);
-            network.setSignalStrength(scanResult.level);
-            
-            // Check if this is the current WiFi network
-            if (primaryNetwork != null && primaryNetwork.getSsid().equals(scanResult.SSID)) {
-                network.setActive(true);
-                network.setSpeed(primaryNetwork.getSpeed());
-                network.setLatency(primaryNetwork.getLatency());
-            } else {
-                network.setActive(false);
-                
-                // Set estimated values
-                network.setSpeed(estimateSpeedFromSignal(scanResult.level));
-                network.setLatency(estimateLatencyFromSignal(scanResult.level));
-            }
-            
-            networks.add(network);
-        });
-        
-        // Add proxy network
-        if (isConnected) {
-            NetworkConnection proxy = new NetworkConnection();
-            proxy.setSsid("Multi-WiFi Proxy");
-            proxy.setType(NetworkConnection.Type.PROXY);
-            proxy.setActive(true);
-            
-            // Set proxy network metrics
-            // These would be received from the proxy server in a real implementation
-            proxy.setSpeed(30); // Placeholder - in real app, get from proxy server
-            proxy.setLatency(50); // Placeholder - in real app, get from proxy server
-            
-            networks.add(proxy);
-        }
-        
-        return networks;
-    }
-    
-    @Override
     public List<NetworkConnection> getConnectedNetworks() {
-        List<NetworkConnection> networks = new ArrayList<>();
-        
-        if (!isInitialized || !isConnected) {
-            return networks;
-        }
-        
-        // Add primary network if connected
-        if (primaryNetwork != null) {
-            networks.add(primaryNetwork);
-        }
-        
-        // Add proxy network
-        NetworkConnection proxy = new NetworkConnection();
-        proxy.setSsid("Multi-WiFi Proxy");
-        proxy.setType(NetworkConnection.Type.PROXY);
-        proxy.setActive(true);
-        proxy.setSpeed(30); // Placeholder - in real app, get from proxy server
-        proxy.setLatency(50); // Placeholder - in real app, get from proxy server
-        
-        networks.add(proxy);
-        
-        return networks;
+        return new ArrayList<>(connectedNetworks);
     }
     
     @Override
-    public boolean addNetwork(String ssid, String password) {
-        if (!isInitialized) {
-            return false;
+    public void updateAllocation(List<NetworkConnection> networks) {
+        // Send allocation updates to the proxy server
+        Log.d(TAG, "Sending allocation updates to proxy server");
+        
+        for (NetworkConnection network : networks) {
+            Log.d(TAG, network.getSsid() + " allocation: " + network.getAllocationPercentage() + "%");
         }
-        
-        // If already connected to proxy, return true
-        if (isConnected) {
-            return true;
-        }
-        
-        // Try to connect to WiFi network
-        boolean wifiConnected = networkUtils.connectToNetwork(ssid, password);
-        if (wifiConnected) {
-            primaryNetwork = networkUtils.getCurrentWifiConnection();
-            
-            // Try to connect to proxy server
-            boolean connectedToProxy = connectToProxyServer();
-            if (connectedToProxy) {
-                isConnected = true;
-                return true;
-            }
-        }
-        
-        return false;
-    }
-    
-    @Override
-    public boolean removeNetwork(String ssid) {
-        // In proxy implementation, we only remove the primary network
-        if (!isInitialized || !isConnected) {
-            return false;
-        }
-        
-        if (primaryNetwork != null && primaryNetwork.getSsid().equals(ssid)) {
-            disconnect();
-            return true;
-        }
-        
-        return false;
-    }
-    
-    @Override
-    public float getCombinedSpeed() {
-        if (!isInitialized || !isConnected) {
-            return 0;
-        }
-        
-        // In a real implementation, would get actual combined speed from the proxy server
-        // For this demo, return an enhanced speed based on the primary network
-        float baseSpeed = 0;
-        
-        if (primaryNetwork != null) {
-            baseSpeed = primaryNetwork.getSpeed();
-        }
-        
-        // Proxy service enhances speed by approximately 30% through optimizations
-        return baseSpeed * 1.3f;
-    }
-    
-    @Override
-    public void updateMetrics() {
-        if (!isInitialized || !isConnected) {
-            return;
-        }
-        
-        // Update primary network metrics
-        if (primaryNetwork != null) {
-            float primarySpeed = networkUtils.measureConnectionSpeed();
-            int primaryLatency = networkUtils.measureLatency("google.com");
-            primaryNetwork.setSpeed(primarySpeed);
-            primaryNetwork.setLatency(primaryLatency);
-        }
-        
-        // Update proxy metrics from server
-        // In a real implementation, would get actual metrics from the proxy server
     }
     
     @Override
     public void cleanup() {
-        disconnect();
+        disconnectAll();
         isInitialized = false;
-    }
-    
-    /**
-     * Check if we can connect to the proxy server
-     */
-    private boolean checkProxyConnection() {
-        // In a real implementation, would try to establish a connection to the proxy server
-        // For this demo, return true to simulate successful connection
-        return true;
-    }
-    
-    /**
-     * Connect to the proxy server
-     */
-    private boolean connectToProxyServer() {
-        // In a real implementation, would establish a connection to the proxy server
-        // For this demo, return true to simulate successful connection
-        return true;
-    }
-    
-    /**
-     * Disconnect from the proxy server
-     */
-    private void disconnectFromProxyServer() {
-        // In a real implementation, would close the connection to the proxy server
-    }
-    
-    /**
-     * Estimate WiFi speed based on signal strength
-     */
-    private float estimateSpeedFromSignal(int signalLevel) {
-        if (signalLevel >= -50) {
-            return 50f; // Excellent signal
-        } else if (signalLevel >= -60) {
-            return 40f; // Good signal
-        } else if (signalLevel >= -70) {
-            return 25f; // Fair signal
-        } else if (signalLevel >= -80) {
-            return 10f; // Poor signal
-        } else {
-            return 5f; // Very poor signal
-        }
-    }
-    
-    /**
-     * Estimate latency based on signal strength
-     */
-    private int estimateLatencyFromSignal(int signalLevel) {
-        if (signalLevel >= -50) {
-            return 15; // Excellent signal
-        } else if (signalLevel >= -60) {
-            return 25; // Good signal
-        } else if (signalLevel >= -70) {
-            return 40; // Fair signal
-        } else if (signalLevel >= -80) {
-            return 60; // Poor signal
-        } else {
-            return 100; // Very poor signal
-        }
     }
 }

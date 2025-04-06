@@ -3,23 +3,38 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
     
     <item
+        android:id="@+id/action_recommend"
+        android:title="Smart Recommendation"
+        android:icon="@android:drawable/ic_menu_manage"
+        app:showAsAction="never" />
+    
+    <item
+        android:id="@+id/action_visualize"
+        android:title="Connection Visualizer"
+        android:icon="@android:drawable/ic_menu_slideshow"
+        app:showAsAction="never" />
+    
+    <item
+        android:id="@+id/action_switch"
+        android:title="Network Switching"
+        android:icon="@android:drawable/ic_menu_revert"
+        app:showAsAction="never" />
+    
+    <item
         android:id="@+id/action_settings"
-        android:orderInCategory="100"
-        android:title="@string/settings"
+        android:title="Load Balancing"
         android:icon="@android:drawable/ic_menu_preferences"
         app:showAsAction="never" />
     
     <item
         android:id="@+id/action_help"
-        android:orderInCategory="200"
-        android:title="@string/help"
+        android:title="Help"
         android:icon="@android:drawable/ic_menu_help"
         app:showAsAction="never" />
     
     <item
         android:id="@+id/action_about"
-        android:orderInCategory="300"
-        android:title="@string/about"
+        android:title="About"
         android:icon="@android:drawable/ic_menu_info_details"
         app:showAsAction="never" />
 </menu>

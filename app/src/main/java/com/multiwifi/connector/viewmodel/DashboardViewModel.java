@@ -1,139 +1,69 @@
 package com.multiwifi.connector.viewmodel;
 
-import androidx.lifecycle.LiveData;
-import androidx.lifecycle.MutableLiveData;
-import androidx.lifecycle.ViewModel;
 import com.multiwifi.connector.model.NetworkConnection;
-import com.multiwifi.connector.service.MultiWifiService;
+
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * ViewModel for the Dashboard screen
  */
-public class DashboardViewModel extends ViewModel {
+public class DashboardViewModel {
     
-    private MultiWifiService multiWifiService;
+    private List<NetworkConnection> savedNetworks;
     
-    private final MutableLiveData<Boolean> connectionStatus = new MutableLiveData<>(false);
-    private final MutableLiveData<Double> combinedSpeed = new MutableLiveData<>(0.0);
-    private final MutableLiveData<List<NetworkConnection>> networkConnections = new MutableLiveData<>(new ArrayList<>());
-    
-    /**
-     * Set the MultiWifiService instance
-     */
-    public void setMultiWifiService(MultiWifiService service) {
-        this.multiWifiService = service;
-        
-        // Update LiveData with current service state
-        updateFromService();
+    public DashboardViewModel() {
+        savedNetworks = new ArrayList<>();
     }
     
     /**
-     * Connect to networks
+     * Gets the saved networks
+     * 
+     * @return List of saved networks
      */
-    public void connect() {
-        if (multiWifiService != null) {
-            boolean connected = multiWifiService.connect();
-            
-            if (connected) {
-                updateFromService();
-            }
+    public List<NetworkConnection> getSavedNetworks() {
+        return savedNetworks;
+    }
+    
+    /**
+     * Sets the saved networks
+     * 
+     * @param networks List of networks to save
+     */
+    public void setSavedNetworks(List<NetworkConnection> networks) {
+        if (networks != null) {
+            this.savedNetworks = new ArrayList<>(networks);
+        } else {
+            this.savedNetworks.clear();
         }
     }
     
     /**
-     * Disconnect from networks
+     * Adds a network to the saved networks
+     * 
+     * @param network The network to add
      */
-    public void disconnect() {
-        if (multiWifiService != null) {
-            boolean disconnected = multiWifiService.disconnect();
-            
-            if (disconnected) {
-                updateFromService();
-            }
+    public void addSavedNetwork(NetworkConnection network) {
+        if (network != null && !savedNetworks.contains(network)) {
+            savedNetworks.add(network);
         }
     }
     
     /**
-     * Add a specific network
+     * Removes a network from the saved networks
+     * 
+     * @param network The network to remove
      */
-    public boolean addNetwork(String ssid, String password) {
-        if (multiWifiService != null) {
-            boolean added = multiWifiService.addNetwork(ssid, password);
-            
-            if (added) {
-                updateFromService();
-            }
-            
-            return added;
-        }
-        
-        return false;
-    }
-    
-    /**
-     * Remove a specific network
-     */
-    public boolean removeNetwork(String ssid) {
-        if (multiWifiService != null) {
-            boolean removed = multiWifiService.removeNetwork(ssid);
-            
-            if (removed) {
-                updateFromService();
-            }
-            
-            return removed;
-        }
-        
-        return false;
-    }
-    
-    /**
-     * Scan for available networks
-     */
-    public List<NetworkConnection> scanNetworks() {
-        if (multiWifiService != null) {
-            return multiWifiService.scanNetworks();
-        }
-        
-        return new ArrayList<>();
-    }
-    
-    /**
-     * Update all LiveData from the service
-     */
-    private void updateFromService() {
-        if (multiWifiService != null) {
-            // Update connection status
-            connectionStatus.setValue(multiWifiService.isConnected());
-            
-            // Update combined speed
-            combinedSpeed.setValue((double) multiWifiService.getCombinedSpeed());
-            
-            // Update network connections
-            networkConnections.setValue(multiWifiService.getConnectedNetworks());
+    public void removeSavedNetwork(NetworkConnection network) {
+        if (network != null) {
+            savedNetworks.remove(network);
         }
     }
     
     /**
-     * Get the connection status LiveData
+     * Clears all saved networks
      */
-    public LiveData<Boolean> getConnectionStatus() {
-        return connectionStatus;
-    }
-    
-    /**
-     * Get the combined speed LiveData
-     */
-    public LiveData<Double> getCombinedSpeed() {
-        return combinedSpeed;
-    }
-    
-    /**
-     * Get the network connections LiveData
-     */
-    public LiveData<List<NetworkConnection>> getNetworkConnections() {
-        return networkConnections;
+    public void clearSavedNetworks() {
+        savedNetworks.clear();
     }
 }

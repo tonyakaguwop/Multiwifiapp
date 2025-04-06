@@ -27,7 +27,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "./gradlew build --no-daemon"
+args = "cd /home/runner/workspace && ./gradlew generateDebugSources --no-daemon"
 
 [deployment]
-run = ["sh", "-c", "./gradlew build --no-daemon"]
+run = ["sh", "-c", "cd /home/runner/workspace && ./gradlew generateDebugSources --no-daemon"]

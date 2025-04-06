@@ -6,51 +6,47 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import android.os.Build;
+import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
+
+import com.multiwifi.connector.model.ConnectionMethod;
 import com.multiwifi.connector.model.NetworkConnection;
-import com.multiwifi.connector.util.LoadBalancer;
 import com.multiwifi.connector.util.NetworkUtils;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Implementation using Android 12+ native multi-network capabilities
+ * Implementation for devices with native multi-WiFi support (Android 12+)
  */
 @RequiresApi(api = Build.VERSION_CODES.S)
 public class NativeMultiWifiImplementation implements MultiWifiImplementation {
+    private static final String TAG = "NativeMultiWifiImpl";
     
-    private final Context context;
-    private final NetworkUtils networkUtils;
-    private final LoadBalancer loadBalancer;
-    private final ConnectivityManager connectivityManager;
-    private final Map<String, Network> connectedNetworks;
-    private final Map<String, ConnectivityManager.NetworkCallback> networkCallbacks;
-    private boolean isInitialized;
-    private boolean isConnected;
-    
-    public NativeMultiWifiImplementation(Context context) {
-        this.context = context;
-        this.networkUtils = new NetworkUtils(context);
-        this.loadBalancer = new LoadBalancer();
-        this.connectivityManager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        this.connectedNetworks = new HashMap<>();
-        this.networkCallbacks = new HashMap<>();
-        this.isInitialized = false;
-        this.isConnected = false;
-    }
+    private Context context;
+    private boolean isInitialized = false;
+    private boolean isConnected = false;
+    private final List<NetworkConnection> connectedNetworks = new ArrayList<>();
+    private final Map<String, Network> networkMap = new HashMap<>();
+    private final Map<String, ConnectivityManager.NetworkCallback> callbackMap = new HashMap<>();
+    private ConnectivityManager connectivityManager;
     
     @Override
-    public boolean initialize() {
-        // Check if running on Android 12 or higher
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+    public boolean initialize(Context context) {
+        this.context = context;
+        this.connectivityManager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        
+        if (connectivityManager == null) {
+            Log.e(TAG, "ConnectivityManager is null");
             return false;
         }
         
-        // Check if connectivity manager is available
-        if (connectivityManager == null) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            Log.e(TAG, "Device does not support native multi-WiFi (requires Android 12+)");
             return false;
         }
         
@@ -59,43 +55,150 @@ public class NativeMultiWifiImplementation implements MultiWifiImplementation {
     }
     
     @Override
-    public boolean connect() {
+    public List<NetworkConnection> scanNetworks() {
         if (!isInitialized) {
-            return false;
+            Log.e(TAG, "Implementation not initialized");
+            return new ArrayList<>();
         }
         
-        // Get current WiFi network if any
-        NetworkConnection currentWifi = networkUtils.getCurrentWifiConnection();
-        if (currentWifi != null) {
-            // Already connected to at least one WiFi network
-            currentWifi.setActive(true);
-            connectedNetworks.put(currentWifi.getSsid(), connectivityManager.getActiveNetwork());
-        }
-        
-        isConnected = !connectedNetworks.isEmpty();
-        return isConnected;
+        return NetworkUtils.scanNetworks(context);
     }
     
     @Override
-    public boolean disconnect() {
+    public boolean connectToNetworks(List<NetworkConnection> networks) {
         if (!isInitialized) {
+            Log.e(TAG, "Implementation not initialized");
             return false;
         }
         
-        // Remove all network callbacks
-        for (ConnectivityManager.NetworkCallback callback : networkCallbacks.values()) {
+        disconnectAll(); // Disconnect existing connections first
+        
+        // Request each network
+        for (NetworkConnection network : networks) {
+            requestNetwork(network);
+            network.setConnectionMethod(ConnectionMethod.NATIVE);
+        }
+        
+        return true;
+    }
+    
+    private void requestNetwork(NetworkConnection network) {
+        // Implementation for Android 12+ to request multiple networks
+        NetworkRequest request = new NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .build();
+        
+        ConnectivityManager.NetworkCallback callback = new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(@NonNull Network newNetwork) {
+                super.onAvailable(newNetwork);
+                Log.d(TAG, "Network " + network.getSsid() + " connected");
+                
+                // Store the network and callback
+                networkMap.put(network.getSsid(), newNetwork);
+                
+                // Update connection status
+                network.setConnected(true);
+                if (!connectedNetworks.contains(network)) {
+                    connectedNetworks.add(network);
+                }
+                
+                isConnected = true;
+                
+                // Test the speed of this connection
+                testNetworkSpeed(network);
+            }
+            
+            @Override
+            public void onLost(@NonNull Network lostNetwork) {
+                super.onLost(lostNetwork);
+                Log.d(TAG, "Network " + network.getSsid() + " disconnected");
+                
+                // Remove from maps
+                networkMap.remove(network.getSsid());
+                
+                // Update connection status
+                network.setConnected(false);
+                connectedNetworks.remove(network);
+                
+                isConnected = !connectedNetworks.isEmpty();
+            }
+            
+            @Override
+            public void onCapabilitiesChanged(@NonNull Network changedNetwork, 
+                                             @NonNull NetworkCapabilities capabilities) {
+                super.onCapabilitiesChanged(changedNetwork, capabilities);
+                
+                // Update network metrics
+                int downstreamBandwidth = capabilities.getLinkDownstreamBandwidthKbps();
+                double speedMbps = downstreamBandwidth / 1000.0;
+                network.setSpeedMbps(speedMbps);
+                
+                Log.d(TAG, "Network " + network.getSsid() + " speed: " + speedMbps + " Mbps");
+            }
+        };
+        
+        connectivityManager.requestNetwork(request, callback);
+        callbackMap.put(network.getSsid(), callback);
+    }
+    
+    private void testNetworkSpeed(NetworkConnection network) {
+        NetworkUtils.testConnectionSpeed(new NetworkUtils.SpeedTestCallback() {
+            @Override
+            public void onSpeedTested(double speedMbps) {
+                network.setSpeedMbps(speedMbps);
+                Log.d(TAG, "Speed test for " + network.getSsid() + ": " + speedMbps + " Mbps");
+            }
+            
+            @Override
+            public void onSpeedTestFailed(String errorMessage) {
+                Log.e(TAG, "Speed test failed for " + network.getSsid() + ": " + errorMessage);
+            }
+        });
+    }
+    
+    @Override
+    public boolean disconnectAll() {
+        if (!isInitialized) {
+            Log.e(TAG, "Implementation not initialized");
+            return false;
+        }
+        
+        // Unregister all callbacks
+        for (Map.Entry<String, ConnectivityManager.NetworkCallback> entry : callbackMap.entrySet()) {
             try {
-                connectivityManager.unregisterNetworkCallback(callback);
+                connectivityManager.unregisterNetworkCallback(entry.getValue());
             } catch (Exception e) {
-                // Ignore exceptions when unregistering
+                Log.e(TAG, "Error unregistering callback for " + entry.getKey(), e);
             }
         }
         
-        networkCallbacks.clear();
+        // Clear collections
+        callbackMap.clear();
+        networkMap.clear();
+        
+        // Update status
+        for (NetworkConnection network : connectedNetworks) {
+            network.setConnected(false);
+        }
         connectedNetworks.clear();
         isConnected = false;
         
         return true;
+    }
+    
+    @Override
+    public double getCombinedSpeed() {
+        if (!isConnected) {
+            return 0.0;
+        }
+        
+        double totalSpeed = 0.0;
+        for (NetworkConnection network : connectedNetworks) {
+            totalSpeed += network.getSpeedMbps();
+        }
+        
+        return totalSpeed;
     }
     
     @Override
@@ -104,211 +207,19 @@ public class NativeMultiWifiImplementation implements MultiWifiImplementation {
     }
     
     @Override
-    public List<NetworkConnection> scanNetworks() {
-        List<NetworkConnection> networks = new ArrayList<>();
-        
-        if (!isInitialized) {
-            return networks;
-        }
-        
-        // Convert scan results to NetworkConnection objects
-        networkUtils.scanForNetworks().forEach(scanResult -> {
-            NetworkConnection network = new NetworkConnection();
-            network.setSsid(scanResult.SSID);
-            network.setType(NetworkConnection.Type.WIFI);
-            network.setSignalStrength(scanResult.level);
-            network.setActive(connectedNetworks.containsKey(scanResult.SSID));
-            
-            // Set estimated speed based on signal strength and capabilities
-            // This is a simplification - real implementations would use more sophisticated methods
-            float estimatedSpeed = calculateEstimatedSpeed(scanResult.level, scanResult.capabilities);
-            network.setSpeed(estimatedSpeed);
-            
-            // Set estimated latency
-            network.setLatency(estimateLatency(scanResult.level));
-            
-            networks.add(network);
-        });
-        
-        return networks;
-    }
-    
-    @Override
     public List<NetworkConnection> getConnectedNetworks() {
-        List<NetworkConnection> networks = new ArrayList<>();
-        
-        if (!isInitialized || !isConnected) {
-            return networks;
-        }
-        
-        // Add currently connected networks
-        for (String ssid : connectedNetworks.keySet()) {
-            NetworkConnection network = new NetworkConnection();
-            network.setSsid(ssid);
-            network.setType(NetworkConnection.Type.WIFI);
-            network.setActive(true);
-            
-            // These would be measured in a real implementation
-            network.setSpeed(networkUtils.measureConnectionSpeed());
-            network.setLatency(networkUtils.measureLatency("google.com"));
-            
-            networks.add(network);
-        }
-        
-        return networks;
+        return new ArrayList<>(connectedNetworks);
     }
     
     @Override
-    public boolean addNetwork(String ssid, String password) {
-        if (!isInitialized) {
-            return false;
-        }
-        
-        // If already connected to this network, return true
-        if (connectedNetworks.containsKey(ssid)) {
-            return true;
-        }
-        
-        // Create a network request for the specified WiFi network
-        NetworkRequest.Builder builder = new NetworkRequest.Builder();
-        builder.addTransportType(NetworkCapabilities.TRANSPORT_WIFI);
-        
-        // Create a callback to handle the connection
-        ConnectivityManager.NetworkCallback callback = new ConnectivityManager.NetworkCallback() {
-            @Override
-            public void onAvailable(@NonNull Network network) {
-                // Store the network
-                connectedNetworks.put(ssid, network);
-                isConnected = true;
-            }
-            
-            @Override
-            public void onLost(@NonNull Network network) {
-                // Remove the network
-                connectedNetworks.values().remove(network);
-                isConnected = !connectedNetworks.isEmpty();
-            }
-        };
-        
-        // Store the callback
-        networkCallbacks.put(ssid, callback);
-        
-        // Request the network
-        connectivityManager.requestNetwork(builder.build(), callback);
-        
-        // Try to connect to the network
-        return networkUtils.connectToNetwork(ssid, password);
-    }
-    
-    @Override
-    public boolean removeNetwork(String ssid) {
-        if (!isInitialized) {
-            return false;
-        }
-        
-        // If not connected to this network, return true
-        if (!connectedNetworks.containsKey(ssid)) {
-            return true;
-        }
-        
-        // Get the callback for this network
-        ConnectivityManager.NetworkCallback callback = networkCallbacks.get(ssid);
-        if (callback != null) {
-            try {
-                // Unregister the callback
-                connectivityManager.unregisterNetworkCallback(callback);
-                networkCallbacks.remove(ssid);
-            } catch (Exception e) {
-                // Ignore exceptions when unregistering
-            }
-        }
-        
-        // Remove the network
-        connectedNetworks.remove(ssid);
-        isConnected = !connectedNetworks.isEmpty();
-        
-        return true;
-    }
-    
-    @Override
-    public float getCombinedSpeed() {
-        if (!isInitialized || !isConnected) {
-            return 0;
-        }
-        
-        // Calculate combined speed based on connected networks
-        float totalSpeed = 0;
-        
-        for (String ssid : connectedNetworks.keySet()) {
-            // In a real implementation, we would measure the speed of each network
-            // For this demo, we'll use a simulated value
-            float speed = networkUtils.measureConnectionSpeed();
-            totalSpeed += speed;
-        }
-        
-        return totalSpeed;
-    }
-    
-    @Override
-    public void updateMetrics() {
-        // In a real implementation, this would measure and update metrics for each network
-        // For this demo, we'll do nothing
+    public void updateAllocation(List<NetworkConnection> networks) {
+        // In native implementation, the Android system handles traffic allocation
+        Log.d(TAG, "Traffic allocation is handled by the system");
     }
     
     @Override
     public void cleanup() {
-        disconnect();
-        connectedNetworks.clear();
-        networkCallbacks.clear();
+        disconnectAll();
         isInitialized = false;
-    }
-    
-    /**
-     * Calculate estimated WiFi speed based on signal strength and capabilities
-     */
-    private float calculateEstimatedSpeed(int signalLevel, String capabilities) {
-        // Base speed based on signal strength
-        float baseSpeed;
-        
-        if (signalLevel >= -50) {
-            baseSpeed = 50f; // Excellent signal
-        } else if (signalLevel >= -60) {
-            baseSpeed = 40f; // Good signal
-        } else if (signalLevel >= -70) {
-            baseSpeed = 25f; // Fair signal
-        } else if (signalLevel >= -80) {
-            baseSpeed = 10f; // Poor signal
-        } else {
-            baseSpeed = 5f; // Very poor signal
-        }
-        
-        // Adjust for WiFi standard (simplified)
-        if (capabilities.contains("WPA3")) {
-            // Likely newer, faster network
-            baseSpeed *= 1.5f;
-        } else if (capabilities.contains("WPA2")) {
-            // Standard modern network
-            baseSpeed *= 1.2f;
-        }
-        
-        return baseSpeed;
-    }
-    
-    /**
-     * Estimate latency based on signal strength
-     */
-    private int estimateLatency(int signalLevel) {
-        // Simplified estimation - in real life, this would be measured
-        if (signalLevel >= -50) {
-            return 15; // Excellent signal
-        } else if (signalLevel >= -60) {
-            return 25; // Good signal
-        } else if (signalLevel >= -70) {
-            return 40; // Fair signal
-        } else if (signalLevel >= -80) {
-            return 60; // Poor signal
-        } else {
-            return 100; // Very poor signal
-        }
     }
 }

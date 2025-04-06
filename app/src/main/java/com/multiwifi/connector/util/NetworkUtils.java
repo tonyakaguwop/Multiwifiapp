@@ -7,214 +7,254 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiConfiguration;
-import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.net.wifi.WifiNetworkSpecifier;
 import android.os.Build;
+import android.os.PatternMatcher;
+import android.util.Log;
+
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
+
+import com.multiwifi.connector.model.ConnectionMethod;
 import com.multiwifi.connector.model.NetworkConnection;
+
+import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
 
+/**
+ * Utility class for network operations
+ */
 public class NetworkUtils {
-    
-    private final Context context;
-    private final WifiManager wifiManager;
-    
-    public NetworkUtils(Context context) {
-        this.context = context;
-        this.wifiManager = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-    }
+    private static final String TAG = "NetworkUtils";
+    private static final String TEST_URL = "https://www.google.com";
+    private static final int CONNECTION_TIMEOUT = 5000; // 5 seconds
     
     /**
-     * Scan for available WiFi networks
+     * Scans for available WiFi networks
+     * 
+     * @param context The application context
+     * @return List of available networks
      */
-    public List<ScanResult> scanForNetworks() {
-        if (wifiManager != null) {
-            wifiManager.startScan();
-            return wifiManager.getScanResults();
-        }
-        return new ArrayList<>();
-    }
-    
-    /**
-     * Connect to a specified WiFi network
-     */
-    public boolean connectToNetwork(String ssid, String password) {
-        if (wifiManager == null) return false;
+    public static List<NetworkConnection> scanNetworks(Context context) {
+        List<NetworkConnection> networks = new ArrayList<>();
         
-        // For Android 10 and above, use NetworkRequest
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            return connectToNetworkQ(ssid, password);
-        } else {
-            // For older Android versions
-            return connectToNetworkLegacy(ssid, password);
+        WifiManager wifiManager = (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
+        if (wifiManager == null) {
+            Log.e(TAG, "WifiManager is null");
+            return networks;
         }
+        
+        // Ensure WiFi is enabled
+        if (!wifiManager.isWifiEnabled()) {
+            Log.w(TAG, "WiFi is disabled");
+            wifiManager.setWifiEnabled(true);
+        }
+        
+        // Start scan
+        boolean scanSuccess = wifiManager.startScan();
+        if (!scanSuccess) {
+            Log.w(TAG, "WiFi scan failed. Using cached results if available.");
+        }
+        
+        // Get scan results
+        List<ScanResult> scanResults = wifiManager.getScanResults();
+        for (ScanResult result : scanResults) {
+            if (result.SSID != null && !result.SSID.isEmpty()) {
+                NetworkConnection network = new NetworkConnection(
+                        result.SSID,
+                        result.BSSID,
+                        result.level
+                );
+                networks.add(network);
+                Log.d(TAG, "Found network: " + result.SSID);
+            }
+        }
+        
+        return networks;
     }
     
     /**
-     * Connect to a WiFi network on Android 10+ using NetworkRequest
+     * Connects to a WiFi network
+     * 
+     * @param context The application context
+     * @param ssid The SSID of the network to connect to
+     * @param password The password for the network (null for open networks)
+     * @param method The connection method to use
+     * @return true if connection was initiated successfully, false otherwise
      */
-    private boolean connectToNetworkQ(String ssid, String password) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                ConnectivityManager connectivityManager = (ConnectivityManager) 
-                        context.getSystemService(Context.CONNECTIVITY_SERVICE);
-                
-                WifiNetworkSpecifier.Builder specifierBuilder = new WifiNetworkSpecifier.Builder();
-                specifierBuilder.setSsid(ssid);
-                
-                if (password != null && !password.isEmpty()) {
-                    specifierBuilder.setWpa2Passphrase(password);
+    public static boolean connectToNetwork(Context context, String ssid, String password, ConnectionMethod method) {
+        switch (method) {
+            case NATIVE:
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    return connectNetworkModern(context, ssid, password);
+                } else {
+                    return connectNetworkLegacy(context, ssid, password);
                 }
-                
-                NetworkRequest.Builder requestBuilder = new NetworkRequest.Builder();
-                requestBuilder.addTransportType(NetworkCapabilities.TRANSPORT_WIFI);
-                requestBuilder.setNetworkSpecifier(specifierBuilder.build());
-                
-                ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
-                    @Override
-                    public void onAvailable(@NonNull Network network) {
-                        super.onAvailable(network);
-                        // Bind to this network
-                        connectivityManager.bindProcessToNetwork(network);
-                    }
-                };
-                
-                connectivityManager.requestNetwork(requestBuilder.build(), networkCallback);
-                return true;
-                
-            } catch (Exception e) {
-                e.printStackTrace();
+            case USB_ADAPTER:
+                // Implementation would depend on the specific USB adapter
+                Log.w(TAG, "USB adapter connection not implemented");
                 return false;
-            }
-        }
-        return false;
-    }
-    
-    /**
-     * Connect to a WiFi network on Android 9 and below
-     */
-    private boolean connectToNetworkLegacy(String ssid, String password) {
-        try {
-            WifiConfiguration configuration = new WifiConfiguration();
-            configuration.SSID = "\"" + ssid + "\"";
-            
-            if (password == null || password.isEmpty()) {
-                // Open network
-                configuration.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
-            } else {
-                // WPA/WPA2 network
-                configuration.preSharedKey = "\"" + password + "\"";
-            }
-            
-            int networkId = wifiManager.addNetwork(configuration);
-            
-            if (networkId != -1) {
-                // Disconnect from current network
-                wifiManager.disconnect();
-                
-                // Connect to new network
-                boolean enableResult = wifiManager.enableNetwork(networkId, true);
-                boolean reconnectResult = wifiManager.reconnect();
-                
-                return enableResult && reconnectResult;
-            }
-            
-            return false;
-            
-        } catch (Exception e) {
-            e.printStackTrace();
-            return false;
+            case HYBRID:
+                // For hybrid, we connect to WiFi and ensure cellular is also available
+                return connectNetworkLegacy(context, ssid, password);
+            case PROXY:
+            default:
+                // For proxy, we just use whatever connection is available
+                return true;
         }
     }
     
     /**
-     * Get information about the currently connected WiFi network
+     * Legacy method to connect to a WiFi network (pre-Android 10)
+     * 
+     * @param context The application context
+     * @param ssid The SSID of the network to connect to
+     * @param password The password for the network (null for open networks)
+     * @return true if connection was initiated successfully, false otherwise
      */
-    public NetworkConnection getCurrentWifiConnection() {
-        if (wifiManager == null) return null;
+    private static boolean connectNetworkLegacy(Context context, String ssid, String password) {
+        WifiManager wifiManager = (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
+        if (wifiManager == null) {
+            Log.e(TAG, "WifiManager is null");
+            return false;
+        }
         
-        try {
-            WifiInfo wifiInfo = wifiManager.getConnectionInfo();
-            
-            if (wifiInfo != null && wifiInfo.getNetworkId() != -1) {
-                NetworkConnection connection = new NetworkConnection();
+        // Setup WiFi configuration
+        WifiConfiguration config = new WifiConfiguration();
+        config.SSID = "\"" + ssid + "\"";
+        
+        if (password == null) {
+            // Open network
+            config.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
+        } else {
+            // Secured network (WPA/WPA2)
+            config.preSharedKey = "\"" + password + "\"";
+        }
+        
+        // Add network
+        int networkId = wifiManager.addNetwork(config);
+        if (networkId == -1) {
+            Log.e(TAG, "Failed to add network configuration");
+            return false;
+        }
+        
+        // Connect to network
+        boolean enableSuccess = wifiManager.enableNetwork(networkId, true);
+        boolean reconnectSuccess = wifiManager.reconnect();
+        
+        return enableSuccess && reconnectSuccess;
+    }
+    
+    /**
+     * Modern method to connect to a WiFi network (Android 10+)
+     * 
+     * @param context The application context
+     * @param ssid The SSID of the network to connect to
+     * @param password The password for the network (null for open networks)
+     * @return true if connection was initiated successfully, false otherwise
+     */
+    @RequiresApi(api = Build.VERSION_CODES.Q)
+    private static boolean connectNetworkModern(Context context, String ssid, String password) {
+        ConnectivityManager connectivityManager = (ConnectivityManager) 
+                context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connectivityManager == null) {
+            Log.e(TAG, "ConnectivityManager is null");
+            return false;
+        }
+        
+        // Create network specifier
+        WifiNetworkSpecifier.Builder specifierBuilder = new WifiNetworkSpecifier.Builder();
+        specifierBuilder.setSsidPattern(new PatternMatcher(ssid, PatternMatcher.PATTERN_LITERAL));
+        
+        if (password != null) {
+            specifierBuilder.setWpa2Passphrase(password);
+        }
+        
+        WifiNetworkSpecifier wifiNetworkSpecifier = specifierBuilder.build();
+        
+        // Create network request
+        NetworkRequest request = new NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .setNetworkSpecifier(wifiNetworkSpecifier)
+                .build();
+        
+        // Request network connection
+        connectivityManager.requestNetwork(request, new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(@NonNull Network network) {
+                super.onAvailable(network);
+                Log.d(TAG, "Network connection is available");
                 
-                // Set SSID (remove quotes if present)
-                String ssid = wifiInfo.getSSID();
-                if (ssid.startsWith("\"") && ssid.endsWith("\"")) {
-                    ssid = ssid.substring(1, ssid.length() - 1);
+                // Bind process to the network
+                connectivityManager.bindProcessToNetwork(network);
+            }
+            
+            @Override
+            public void onUnavailable() {
+                super.onUnavailable();
+                Log.e(TAG, "Network connection is unavailable");
+            }
+        });
+        
+        return true;
+    }
+    
+    /**
+     * Tests the speed of the current connection
+     * 
+     * @param callback Callback to receive the speed test result
+     */
+    public static void testConnectionSpeed(final SpeedTestCallback callback) {
+        Executors.newSingleThreadExecutor().execute(() -> {
+            long startTime = System.currentTimeMillis();
+            long fileSize = 0;
+            
+            try {
+                URL url = new URL(TEST_URL);
+                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                connection.setRequestMethod("GET");
+                connection.setConnectTimeout(CONNECTION_TIMEOUT);
+                connection.setReadTimeout(CONNECTION_TIMEOUT);
+                connection.connect();
+                
+                if (connection.getResponseCode() == HttpURLConnection.HTTP_OK) {
+                    byte[] buffer = new byte[1024];
+                    int bytesRead;
+                    
+                    while ((bytesRead = connection.getInputStream().read(buffer)) != -1) {
+                        fileSize += bytesRead;
+                    }
+                    
+                    long endTime = System.currentTimeMillis();
+                    double duration = (endTime - startTime) / 1000.0; // seconds
+                    double speed = (fileSize * 8.0) / (duration * 1000000.0); // Mbps
+                    
+                    // Callback with result
+                    if (callback != null) {
+                        callback.onSpeedTested(speed);
+                    }
                 }
-                connection.setSsid(ssid);
                 
-                // Set signal strength (RSSI)
-                connection.setSignalStrength(wifiInfo.getRssi());
-                
-                // Set link speed
-                connection.setSpeed(wifiInfo.getLinkSpeed());
-                
-                // Set connection type to WiFi
-                connection.setType(NetworkConnection.Type.WIFI);
-                
-                return connection;
+                connection.disconnect();
+            } catch (IOException e) {
+                Log.e(TAG, "Error testing connection speed", e);
+                if (callback != null) {
+                    callback.onSpeedTestFailed(e.getMessage());
+                }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        
-        return null;
+        });
     }
     
     /**
-     * Measure the latency to a remote server
+     * Interface for speed test callbacks
      */
-    public int measureLatency(String host) {
-        try {
-            Process process = Runtime.getRuntime().exec("/system/bin/ping -c 1 " + host);
-            process.waitFor();
-            
-            // Parse ping output to extract latency
-            // For a real implementation, use a non-blocking approach
-            
-            return 30; // Placeholder - return a default latency of 30ms
-        } catch (Exception e) {
-            e.printStackTrace();
-            return -1;
-        }
-    }
-    
-    /**
-     * Measure connection speed (in Mbps)
-     */
-    public float measureConnectionSpeed() {
-        // In a real app, this would use a speed test against a remote server
-        // For this demo, we'll return a simulated value based on current link speed
-        if (wifiManager != null) {
-            WifiInfo wifiInfo = wifiManager.getConnectionInfo();
-            if (wifiInfo != null) {
-                // Get link speed in Mbps
-                int linkSpeed = wifiInfo.getLinkSpeed();
-                
-                // Actual speeds are typically lower than link speeds
-                // Apply a realistic factor based on signal strength
-                float signalQualityFactor = calculateSignalQualityFactor(wifiInfo.getRssi());
-                return linkSpeed * signalQualityFactor;
-            }
-        }
-        
-        return 0;
-    }
-    
-    /**
-     * Calculate a factor (0.0-1.0) representing signal quality based on RSSI
-     */
-    private float calculateSignalQualityFactor(int rssi) {
-        // RSSI usually ranges from -100 dBm (poor) to -30 dBm (excellent)
-        if (rssi >= -50) return 0.9f;
-        if (rssi >= -60) return 0.8f;
-        if (rssi >= -70) return 0.6f;
-        if (rssi >= -80) return 0.4f;
-        return 0.2f;
+    public interface SpeedTestCallback {
+        void onSpeedTested(double speedMbps);
+        void onSpeedTestFailed(String errorMessage);
     }
 }

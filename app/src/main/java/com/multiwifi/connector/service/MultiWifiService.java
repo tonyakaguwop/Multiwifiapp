@@ -12,7 +12,11 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.util.Log;
+
+import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+
 import com.multiwifi.connector.DashboardActivity;
 import com.multiwifi.connector.R;
 import com.multiwifi.connector.implementation.HybridImplementation;
@@ -20,31 +24,50 @@ import com.multiwifi.connector.implementation.MultiWifiImplementation;
 import com.multiwifi.connector.implementation.NativeMultiWifiImplementation;
 import com.multiwifi.connector.implementation.ProxyImplementation;
 import com.multiwifi.connector.implementation.UsbWifiImplementation;
+import com.multiwifi.connector.implementation.VpnImplementation;
 import com.multiwifi.connector.model.ConnectionMethod;
 import com.multiwifi.connector.model.DeviceCapabilities;
 import com.multiwifi.connector.model.NetworkConnection;
 import com.multiwifi.connector.util.DeviceCapabilityDetector;
+import com.multiwifi.connector.util.LoadBalancer;
+
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 
 /**
- * Service managing multi-WiFi connections
+ * Service to manage multi-WiFi connections in the background
  */
 public class MultiWifiService extends Service {
-    
+    private static final String TAG = "MultiWifiService";
     private static final int NOTIFICATION_ID = 1001;
-    private static final String CHANNEL_ID = "multi_wifi_channel";
+    private static final String CHANNEL_ID = "MultiWifiServiceChannel";
     private static final long UPDATE_INTERVAL = 5000; // 5 seconds
     
     private final IBinder binder = new LocalBinder();
-    private DeviceCapabilityDetector capabilityDetector;
     private MultiWifiImplementation implementation;
-    private Handler updateHandler;
-    private Runnable updateRunnable;
+    private DeviceCapabilities capabilities;
+    private ConnectionMethod currentMethod;
     private boolean isConnected = false;
     private List<NetworkConnection> connectedNetworks = new ArrayList<>();
-    private float combinedSpeed = 0;
+    private final List<ConnectionListener> listeners = new ArrayList<>();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private Timer updateTimer;
+    private LoadBalancer loadBalancer;
     
+    /**
+     * Interface for connection status listeners
+     */
+    public interface ConnectionListener {
+        void onConnectionStatusChanged(boolean isConnected);
+        void onNetworksUpdated(List<NetworkConnection> networks);
+        void onCombinedSpeedChanged(double speedMbps);
+    }
+    
+    /**
+     * Binder for clients to access the service
+     */
     public class LocalBinder extends Binder {
         public MultiWifiService getService() {
             return MultiWifiService.this;
@@ -55,28 +78,29 @@ public class MultiWifiService extends Service {
     public void onCreate() {
         super.onCreate();
         
-        // Initialize capability detector
-        capabilityDetector = new DeviceCapabilityDetector(this);
+        // Initialize load balancer
+        loadBalancer = new LoadBalancer();
         
-        // Initialize update handler
-        updateHandler = new Handler(Looper.getMainLooper());
-        updateRunnable = this::updateNetworkMetrics;
+        // Detect device capabilities
+        capabilities = DeviceCapabilityDetector.detectCapabilities(this);
         
-        // Create notification channel
-        createNotificationChannel();
+        // Initialize the appropriate implementation based on capabilities
+        initializeImplementation(capabilities.getRecommendedMethod());
         
-        // Initialize the appropriate implementation
-        initializeImplementation();
+        // Start update timer
+        startUpdateTimer();
+        
+        Log.d(TAG, "MultiWifi service created");
     }
     
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // Start as a foreground service
-        startForeground(NOTIFICATION_ID, createNotification("Multi-WiFi service running"));
-        
+        Log.d(TAG, "MultiWifi service started");
+        startForeground(NOTIFICATION_ID, createNotification());
         return START_STICKY;
     }
     
+    @Nullable
     @Override
     public IBinder onBind(Intent intent) {
         return binder;
@@ -84,131 +108,109 @@ public class MultiWifiService extends Service {
     
     @Override
     public void onDestroy() {
-        // Cleanup implementation
+        Log.d(TAG, "MultiWifi service destroyed");
+        stopUpdateTimer();
+        
         if (implementation != null) {
             implementation.cleanup();
+            implementation = null;
         }
-        
-        // Remove update callbacks
-        updateHandler.removeCallbacks(updateRunnable);
         
         super.onDestroy();
     }
     
     /**
-     * Initialize the appropriate implementation based on device capabilities
+     * Initializes the appropriate implementation based on the connection method
+     * 
+     * @param method The connection method to use
      */
-    private void initializeImplementation() {
-        // Detect device capabilities
-        capabilityDetector.detectCapabilities();
-        DeviceCapabilities capabilities = capabilityDetector.getDeviceCapabilities();
+    public void initializeImplementation(ConnectionMethod method) {
+        // Clean up existing implementation if any
+        if (implementation != null) {
+            implementation.cleanup();
+        }
         
-        // Create the appropriate implementation
-        ConnectionMethod method = capabilities.getRecommendedMethod();
-        
+        // Create new implementation based on method
+        currentMethod = method;
         switch (method) {
             case NATIVE:
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    implementation = new NativeMultiWifiImplementation(this);
+                    implementation = new NativeMultiWifiImplementation();
                 } else {
-                    // Fallback to proxy if native is not available
-                    implementation = new ProxyImplementation(this);
+                    // Fallback to VPN if native is not supported
+                    implementation = new VpnImplementation(this);
+                    currentMethod = ConnectionMethod.VPN;
                 }
                 break;
                 
             case USB_ADAPTER:
-                implementation = new UsbWifiImplementation(this);
+                implementation = new UsbWifiImplementation();
                 break;
                 
             case HYBRID:
-                implementation = new HybridImplementation(this);
+                implementation = new HybridImplementation();
+                break;
+                
+            case VPN:
+                implementation = new VpnImplementation(this);
                 break;
                 
             case PROXY:
             default:
-                implementation = new ProxyImplementation(this);
+                // Try VPN first, then fall back to PROXY if needed
+                implementation = new VpnImplementation(this);
+                currentMethod = ConnectionMethod.VPN;
+                // If VPN initialization fails, we'll fall back to PROXY in the code below
                 break;
         }
         
         // Initialize the implementation
-        if (implementation != null) {
-            implementation.initialize();
-        }
-    }
-    
-    /**
-     * Connect to multiple networks
-     */
-    public boolean connect() {
-        if (implementation == null) {
-            return false;
-        }
+        boolean initSuccess = implementation.initialize(this);
         
-        boolean connected = implementation.connect();
-        
-        if (connected) {
-            isConnected = true;
-            connectedNetworks = implementation.getConnectedNetworks();
-            combinedSpeed = implementation.getCombinedSpeed();
+        if (!initSuccess) {
+            Log.e(TAG, "Failed to initialize " + method + " implementation");
             
-            // Start periodic updates
-            startPeriodicUpdates();
-            
-            // Update notification
-            updateNotification();
+            // Fallback to proxy if initialization fails and we're not already using proxy
+            if (currentMethod != ConnectionMethod.PROXY) {
+                // If we tried VPN and it failed, fall back to PROXY
+                if (currentMethod == ConnectionMethod.VPN) {
+                    Log.d(TAG, "VPN initialization failed, falling back to PROXY");
+                    implementation = new ProxyImplementation();
+                    currentMethod = ConnectionMethod.PROXY;
+                    initSuccess = implementation.initialize(this);
+                    
+                    if (!initSuccess) {
+                        Log.e(TAG, "Failed to initialize PROXY implementation as fallback");
+                    }
+                } else {
+                    // For other methods, try VPN first as fallback
+                    Log.d(TAG, "Initialization failed, trying VPN as fallback");
+                    implementation = new VpnImplementation(this);
+                    currentMethod = ConnectionMethod.VPN;
+                    initSuccess = implementation.initialize(this);
+                    
+                    if (!initSuccess) {
+                        // If VPN also fails, fall back to PROXY as last resort
+                        Log.d(TAG, "VPN initialization failed, falling back to PROXY");
+                        implementation = new ProxyImplementation();
+                        currentMethod = ConnectionMethod.PROXY;
+                        initSuccess = implementation.initialize(this);
+                        
+                        if (!initSuccess) {
+                            Log.e(TAG, "Failed to initialize PROXY implementation as last resort");
+                        }
+                    }
+                }
+            }
+        } else {
+            Log.d(TAG, "Initialized " + method + " implementation");
         }
-        
-        return connected;
     }
     
     /**
-     * Disconnect from all networks
-     */
-    public boolean disconnect() {
-        if (implementation == null) {
-            return false;
-        }
-        
-        boolean disconnected = implementation.disconnect();
-        
-        if (disconnected) {
-            isConnected = false;
-            connectedNetworks.clear();
-            combinedSpeed = 0;
-            
-            // Stop periodic updates
-            stopPeriodicUpdates();
-            
-            // Update notification
-            updateNotification();
-        }
-        
-        return disconnected;
-    }
-    
-    /**
-     * Check if connected
-     */
-    public boolean isConnected() {
-        return isConnected;
-    }
-    
-    /**
-     * Get list of connected networks
-     */
-    public List<NetworkConnection> getConnectedNetworks() {
-        return connectedNetworks;
-    }
-    
-    /**
-     * Get combined connection speed
-     */
-    public float getCombinedSpeed() {
-        return combinedSpeed;
-    }
-    
-    /**
-     * Scan for available networks
+     * Scans for available networks
+     * 
+     * @return List of available networks
      */
     public List<NetworkConnection> scanNetworks() {
         if (implementation == null) {
@@ -219,154 +221,293 @@ public class MultiWifiService extends Service {
     }
     
     /**
-     * Add a specific network
+     * Connects to the given networks
+     * 
+     * @param networks List of networks to connect to
+     * @return true if connection process was initiated successfully
      */
-    public boolean addNetwork(String ssid, String password) {
+    public boolean connectToNetworks(List<NetworkConnection> networks) {
         if (implementation == null) {
             return false;
         }
         
-        boolean added = implementation.addNetwork(ssid, password);
-        
-        if (added) {
-            isConnected = implementation.isConnected();
-            connectedNetworks = implementation.getConnectedNetworks();
-            combinedSpeed = implementation.getCombinedSpeed();
-            
-            // Start periodic updates if newly connected
-            if (isConnected && connectedNetworks.size() == 1) {
-                startPeriodicUpdates();
-            }
-            
-            // Update notification
-            updateNotification();
+        boolean success = implementation.connectToNetworks(networks);
+        if (success) {
+            updateConnectionStatus();
         }
         
-        return added;
+        return success;
     }
     
     /**
-     * Remove a specific network
+     * Disconnects from all networks
+     * 
+     * @return true if disconnection was successful
      */
-    public boolean removeNetwork(String ssid) {
+    public boolean disconnectAll() {
         if (implementation == null) {
             return false;
         }
         
-        boolean removed = implementation.removeNetwork(ssid);
-        
-        if (removed) {
-            isConnected = implementation.isConnected();
-            connectedNetworks = implementation.getConnectedNetworks();
-            combinedSpeed = implementation.getCombinedSpeed();
-            
-            // Stop periodic updates if disconnected
-            if (!isConnected) {
-                stopPeriodicUpdates();
-            }
-            
-            // Update notification
-            updateNotification();
+        boolean success = implementation.disconnectAll();
+        if (success) {
+            updateConnectionStatus();
         }
         
-        return removed;
+        return success;
     }
     
     /**
-     * Start periodic network metric updates
+     * Gets the combined speed of all connected networks
+     * 
+     * @return Combined speed in Mbps
      */
-    private void startPeriodicUpdates() {
-        updateHandler.postDelayed(updateRunnable, UPDATE_INTERVAL);
-    }
-    
-    /**
-     * Stop periodic network metric updates
-     */
-    private void stopPeriodicUpdates() {
-        updateHandler.removeCallbacks(updateRunnable);
-    }
-    
-    /**
-     * Update network metrics
-     */
-    private void updateNetworkMetrics() {
-        if (implementation != null && isConnected) {
-            // Update metrics
-            implementation.updateMetrics();
-            
-            // Update local variables
-            connectedNetworks = implementation.getConnectedNetworks();
-            combinedSpeed = implementation.getCombinedSpeed();
-            
-            // Update notification
-            updateNotification();
-            
-            // Schedule next update
-            updateHandler.postDelayed(updateRunnable, UPDATE_INTERVAL);
+    public double getCombinedSpeed() {
+        if (implementation == null || !isConnected) {
+            return 0.0;
         }
+        
+        return implementation.getCombinedSpeed();
     }
     
     /**
-     * Create notification channel (required for Android 8.0+)
+     * Checks if the service is connected to any networks
+     * 
+     * @return true if connected, false otherwise
      */
-    private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            CharSequence name = "Multi-WiFi Service";
-            String description = "Notifications for the Multi-WiFi Connector service";
-            int importance = NotificationManager.IMPORTANCE_LOW;
+    public boolean isConnected() {
+        return isConnected;
+    }
+    
+    /**
+     * Gets the current connection method
+     * 
+     * @return Current connection method
+     */
+    /**
+    * Gets the current implementation
+    * 
+    * @return Current implementation
+    */
+    public MultiWifiImplementation getImplementation() {
+        return implementation;
+    }
+
+    public ConnectionMethod getCurrentMethod() {
+        return currentMethod;
+    }
+    
+    /**
+     * Gets the device capabilities
+     * 
+     * @return Device capabilities
+     */
+    public DeviceCapabilities getCapabilities() {
+        return capabilities;
+    }
+    
+    /**
+     * Gets currently connected networks
+     * 
+     * @return List of connected networks
+     */
+    public List<NetworkConnection> getConnectedNetworks() {
+        if (implementation == null) {
+            return new ArrayList<>();
+        }
+        
+        return implementation.getConnectedNetworks();
+    }
+    
+    /**
+     * Updates the allocation percentages for the networks
+     * 
+     * @param networks List of networks with updated allocation percentages
+     */
+    public void updateAllocation(List<NetworkConnection> networks) {
+        if (implementation == null) {
+            return;
+        }
+        
+        implementation.updateAllocation(networks);
+    }
+    
+    /**
+     * Sets the load balancing strategy
+     * 
+     * @param strategy The strategy to use
+     */
+    public void setLoadBalancingStrategy(LoadBalancer.Strategy strategy) {
+        if (loadBalancer != null) {
+            loadBalancer.setStrategy(strategy);
             
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, name, importance);
-            channel.setDescription(description);
-            
-            NotificationManager notificationManager = getSystemService(NotificationManager.class);
-            if (notificationManager != null) {
-                notificationManager.createNotificationChannel(channel);
+            // Recalculate allocation with new strategy
+            if (isConnected && implementation != null) {
+                List<NetworkConnection> networks = implementation.getConnectedNetworks();
+                loadBalancer.computeAllocation(networks);
+                implementation.updateAllocation(networks);
+                
+                // Notify listeners
+                for (ConnectionListener listener : listeners) {
+                    listener.onNetworksUpdated(networks);
+                }
             }
         }
     }
     
     /**
-     * Create and return a notification
+     * Gets the current load balancing strategy
+     * 
+     * @return Current strategy
      */
-    private Notification createNotification(String contentText) {
-        // Create an intent to open the app when notification is tapped
-        Intent notificationIntent = new Intent(this, DashboardActivity.class);
+    public LoadBalancer.Strategy getLoadBalancingStrategy() {
+        if (loadBalancer != null) {
+            return loadBalancer.getStrategy();
+        }
+        
+        return LoadBalancer.Strategy.ADAPTIVE;
+    }
+    
+    /**
+     * Registers a connection listener
+     * 
+     * @param listener The listener to register
+     */
+    public void registerListener(ConnectionListener listener) {
+        if (!listeners.contains(listener)) {
+            listeners.add(listener);
+        }
+    }
+    
+    /**
+     * Unregisters a connection listener
+     * 
+     * @param listener The listener to unregister
+     */
+    public void unregisterListener(ConnectionListener listener) {
+        listeners.remove(listener);
+    }
+    
+    /**
+     * Creates the notification for foreground service
+     * 
+     * @return The notification
+     */
+    private Notification createNotification() {
+        createNotificationChannel();
+        
+        // Create an intent for the dashboard activity
+        Intent intent = new Intent(this, DashboardActivity.class);
         PendingIntent pendingIntent = PendingIntent.getActivity(
                 this,
                 0,
-                notificationIntent,
+                intent,
                 PendingIntent.FLAG_IMMUTABLE
         );
         
         // Build the notification
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle(getString(R.string.app_name))
+                .setContentText(isConnected ? 
+                        getString(R.string.status_connected) : 
+                        getString(R.string.status_disconnected))
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("Multi-WiFi Connector")
-                .setContentText(contentText)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setContentIntent(pendingIntent);
+                .setContentIntent(pendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT);
         
         return builder.build();
     }
     
     /**
-     * Update the service notification
+     * Creates the notification channel for foreground service
+     */
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "Multi-WiFi Service Channel",
+                    NotificationManager.IMPORTANCE_DEFAULT
+            );
+            
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
+        }
+    }
+    
+    /**
+     * Updates the notification with current connection status
      */
     private void updateNotification() {
-        String content;
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) {
+            manager.notify(NOTIFICATION_ID, createNotification());
+        }
+    }
+    
+    /**
+     * Starts the update timer to periodically update connection status
+     */
+    private void startUpdateTimer() {
+        stopUpdateTimer(); // Ensure no existing timer
         
-        if (isConnected) {
-            int networkCount = connectedNetworks.size();
-            content = "Connected to " + networkCount + " network" +
-                    (networkCount > 1 ? "s" : "") +
-                    " (" + String.format("%.1f", combinedSpeed) + " Mbps)";
-        } else {
-            content = "Not connected";
+        updateTimer = new Timer();
+        updateTimer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                updateConnectionStatus();
+            }
+        }, 0, UPDATE_INTERVAL);
+    }
+    
+    /**
+     * Stops the update timer
+     */
+    private void stopUpdateTimer() {
+        if (updateTimer != null) {
+            updateTimer.cancel();
+            updateTimer = null;
+        }
+    }
+    
+    /**
+     * Updates the connection status and notifies listeners
+     */
+    private void updateConnectionStatus() {
+        if (implementation == null) {
+            return;
         }
         
-        NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (notificationManager != null) {
-            notificationManager.notify(NOTIFICATION_ID, createNotification(content));
+        // Update connection status
+        final boolean newConnected = implementation.isConnected();
+        final List<NetworkConnection> newNetworks = implementation.getConnectedNetworks();
+        final double newSpeed = implementation.getCombinedSpeed();
+        
+        // Calculate allocation if connected
+        if (newConnected && loadBalancer != null) {
+            loadBalancer.computeAllocation(newNetworks);
+            implementation.updateAllocation(newNetworks);
         }
+        
+        // Update notification on main thread
+        mainHandler.post(() -> {
+            boolean statusChanged = (isConnected != newConnected);
+            isConnected = newConnected;
+            connectedNetworks = new ArrayList<>(newNetworks);
+            
+            // Update notification
+            updateNotification();
+            
+            // Notify listeners
+            for (ConnectionListener listener : listeners) {
+                if (statusChanged) {
+                    listener.onConnectionStatusChanged(isConnected);
+                }
+                
+                listener.onNetworksUpdated(connectedNetworks);
+                listener.onCombinedSpeedChanged(newSpeed);
+            }
+        });
     }
 }

@@ -1,158 +1,191 @@
 package com.multiwifi.connector.util;
 
+import android.util.Log;
+
 import com.multiwifi.connector.model.NetworkConnection;
+
 import java.util.List;
 
+/**
+ * Utility class to handle load balancing across multiple network connections
+ */
 public class LoadBalancer {
+    private static final String TAG = "LoadBalancer";
     
     // Load balancing strategies
     public enum Strategy {
         ROUND_ROBIN,
-        WEIGHTED,
+        SPEED_BASED,
         LATENCY_BASED,
         ADAPTIVE
     }
     
-    private Strategy currentStrategy = Strategy.ADAPTIVE;
+    private Strategy currentStrategy;
     
     public LoadBalancer() {
-        // Default constructor
+        this.currentStrategy = Strategy.ADAPTIVE; // Default
     }
     
     /**
-     * Set the load balancing strategy
+     * Sets the load balancing strategy
+     * 
+     * @param strategy The strategy to use
      */
     public void setStrategy(Strategy strategy) {
         this.currentStrategy = strategy;
+        Log.d(TAG, "Load balancing strategy set to: " + strategy);
     }
     
     /**
-     * Get the current load balancing strategy
+     * Gets the current load balancing strategy
+     * 
+     * @return Current strategy
      */
     public Strategy getStrategy() {
         return currentStrategy;
     }
     
     /**
-     * Distribute traffic load across available networks
-     * @param networks List of available network connections
-     * @param dataSize Size of data to be transmitted in bytes
-     * @return List of networks with updated allocation percentages
+     * Computes allocation percentages for each network connection based on the current strategy
+     * 
+     * @param connections List of network connections
      */
-    public List<NetworkConnection> distributeLoad(List<NetworkConnection> networks, long dataSize) {
+    public void computeAllocation(List<NetworkConnection> connections) {
+        if (connections == null || connections.isEmpty()) {
+            Log.w(TAG, "No connections to allocate traffic to");
+            return;
+        }
+        
         switch (currentStrategy) {
             case ROUND_ROBIN:
-                return applyRoundRobinStrategy(networks);
-            case WEIGHTED:
-                return applyWeightedStrategy(networks);
+                allocateRoundRobin(connections);
+                break;
+            case SPEED_BASED:
+                allocateBySpeed(connections);
+                break;
             case LATENCY_BASED:
-                return applyLatencyBasedStrategy(networks);
+                allocateByLatency(connections);
+                break;
             case ADAPTIVE:
             default:
-                return applyAdaptiveStrategy(networks, dataSize);
+                allocateAdaptively(connections);
+                break;
+        }
+        
+        // Log the allocations
+        for (NetworkConnection conn : connections) {
+            Log.d(TAG, "Network " + conn.getSsid() + " allocated " + 
+                    String.format("%.2f%%", conn.getAllocationPercentage()));
         }
     }
     
     /**
-     * Round Robin strategy - distributes load equally among networks
+     * Allocate traffic equally among all connections
+     * 
+     * @param connections List of network connections
      */
-    private List<NetworkConnection> applyRoundRobinStrategy(List<NetworkConnection> networks) {
-        if (networks.isEmpty()) return networks;
-        
-        float equalShare = 100.0f / networks.size();
-        
-        for (NetworkConnection network : networks) {
-            network.setAllocationPercentage(equalShare);
+    private void allocateRoundRobin(List<NetworkConnection> connections) {
+        double equalShare = 100.0 / connections.size();
+        for (NetworkConnection conn : connections) {
+            conn.setAllocationPercentage(equalShare);
         }
-        
-        return networks;
     }
     
     /**
-     * Weighted strategy - distributes load based on network speed
+     * Allocate traffic proportionally to the speed of each connection
+     * 
+     * @param connections List of network connections
      */
-    private List<NetworkConnection> applyWeightedStrategy(List<NetworkConnection> networks) {
-        if (networks.isEmpty()) return networks;
+    private void allocateBySpeed(List<NetworkConnection> connections) {
+        double totalSpeed = 0;
         
-        // Calculate total speed of all networks
-        float totalSpeed = 0;
-        for (NetworkConnection network : networks) {
-            totalSpeed += network.getSpeed();
+        // Calculate total speed
+        for (NetworkConnection conn : connections) {
+            totalSpeed += conn.getSpeedMbps();
         }
         
-        // If total speed is 0, fall back to round robin
-        if (totalSpeed == 0) {
-            return applyRoundRobinStrategy(networks);
+        // Avoid division by zero
+        if (totalSpeed <= 0) {
+            allocateRoundRobin(connections);
+            return;
         }
         
-        // Distribute allocation based on speed ratio
-        for (NetworkConnection network : networks) {
-            float allocation = (network.getSpeed() / totalSpeed) * 100;
-            network.setAllocationPercentage(allocation);
+        // Allocate proportionally to speed
+        for (NetworkConnection conn : connections) {
+            double allocation = (conn.getSpeedMbps() / totalSpeed) * 100.0;
+            conn.setAllocationPercentage(allocation);
         }
-        
-        return networks;
     }
     
     /**
-     * Latency-based strategy - distributes load inversely proportional to latency
+     * Allocate traffic inversely proportional to latency
+     * 
+     * @param connections List of network connections
      */
-    private List<NetworkConnection> applyLatencyBasedStrategy(List<NetworkConnection> networks) {
-        if (networks.isEmpty()) return networks;
+    private void allocateByLatency(List<NetworkConnection> connections) {
+        double totalInverseLatency = 0;
         
-        // Calculate total inverse latency (lower latency gets higher weight)
-        float totalInverseLatency = 0;
-        for (NetworkConnection network : networks) {
-            // Add a small value to avoid division by zero
-            float latency = Math.max(network.getLatency(), 1);
-            totalInverseLatency += (1000.0f / latency);
+        // Calculate total inverse latency (lower latency = better)
+        for (NetworkConnection conn : connections) {
+            // Avoid division by zero by adding 1
+            double inverseLatency = 1.0 / (conn.getLatencyMs() + 1);
+            totalInverseLatency += inverseLatency;
         }
         
-        // If total inverse latency is 0, fall back to round robin
-        if (totalInverseLatency == 0) {
-            return applyRoundRobinStrategy(networks);
+        // Avoid division by zero
+        if (totalInverseLatency <= 0) {
+            allocateRoundRobin(connections);
+            return;
         }
         
-        // Distribute allocation based on inverse latency ratio
-        for (NetworkConnection network : networks) {
-            float latency = Math.max(network.getLatency(), 1);
-            float inverseLatency = 1000.0f / latency;
-            float allocation = (inverseLatency / totalInverseLatency) * 100;
-            network.setAllocationPercentage(allocation);
+        // Allocate inversely proportional to latency
+        for (NetworkConnection conn : connections) {
+            double inverseLatency = 1.0 / (conn.getLatencyMs() + 1);
+            double allocation = (inverseLatency / totalInverseLatency) * 100.0;
+            conn.setAllocationPercentage(allocation);
         }
-        
-        return networks;
     }
     
     /**
-     * Adaptive strategy - considers speed, latency, and reliability
+     * Allocate traffic adaptively based on both speed and latency
+     * 
+     * @param connections List of network connections
      */
-    private List<NetworkConnection> applyAdaptiveStrategy(List<NetworkConnection> networks, long dataSize) {
-        if (networks.isEmpty()) return networks;
+    private void allocateAdaptively(List<NetworkConnection> connections) {
+        double totalScore = 0;
         
-        // For small data transfers, prioritize low latency
-        if (dataSize < 100000) { // Less than 100KB
-            return applyLatencyBasedStrategy(networks);
+        // Calculate a score for each connection based on speed and latency
+        for (NetworkConnection conn : connections) {
+            double score = calculateAdaptiveScore(conn);
+            totalScore += score;
         }
         
-        // For large data transfers, prioritize speed
-        return applyWeightedStrategy(networks);
+        // Avoid division by zero
+        if (totalScore <= 0) {
+            allocateRoundRobin(connections);
+            return;
+        }
+        
+        // Allocate based on scores
+        for (NetworkConnection conn : connections) {
+            double score = calculateAdaptiveScore(conn);
+            double allocation = (score / totalScore) * 100.0;
+            conn.setAllocationPercentage(allocation);
+        }
     }
     
     /**
-     * Measure and update network performance metrics
+     * Calculates a score for adaptive allocation based on speed and latency
+     * 
+     * @param conn The network connection
+     * @return Score value
      */
-    public void updateNetworkMetrics(List<NetworkConnection> networks) {
-        // In a real implementation, this would measure and update each network's
-        // current speed, latency, and reliability metrics
+    private double calculateAdaptiveScore(NetworkConnection conn) {
+        // Speed is good, latency is bad
+        // Add 1 to latency to avoid division by zero
+        double latencyFactor = 100.0 / (conn.getLatencyMs() + 1);
         
-        // For demo purposes, we'll use the existing values or simulate them
-        for (NetworkConnection network : networks) {
-            // Update speed based on recent measurements
-            // Update latency based on recent measurements
-            // Update reliability based on recent error rates
-            
-            // In a real app, these would be determined through active monitoring
-        }
+        // Give more weight to speed
+        return (conn.getSpeedMbps() * 0.7) + (latencyFactor * 0.3);
     }
 }

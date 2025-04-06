@@ -1,43 +1,84 @@
 package com.multiwifi.connector.util;
 
-import android.content.Context;
+import android.app.Activity;
 import android.content.Intent;
-import android.widget.Toast;
+import android.os.Bundle;
 
 /**
- * Utility class for navigation to different parts of the app
+ * Utility class for navigation between activities
  */
 public class NavigationUtils {
     
     /**
-     * Navigate to the settings screen
+     * Navigate to a new activity
+     * 
+     * @param currentActivity Current activity
+     * @param destinationClass Destination activity class
      */
-    public static void navigateToSettings(Context context) {
-        // For future implementation - currently just shows a toast
-        Toast.makeText(context, "Settings will be implemented in a future update", Toast.LENGTH_SHORT).show();
+    public static void navigateTo(Activity currentActivity, Class<?> destinationClass) {
+        navigateTo(currentActivity, destinationClass, null, false);
     }
     
     /**
-     * Navigate to the help screen
+     * Navigate to a new activity with extras
+     * 
+     * @param currentActivity Current activity
+     * @param destinationClass Destination activity class
+     * @param extras Bundle of extras to pass to the new activity
      */
-    public static void navigateToHelp(Context context) {
-        // For future implementation - currently just shows a toast
-        Toast.makeText(context, "Help section will be implemented in a future update", Toast.LENGTH_SHORT).show();
+    public static void navigateTo(Activity currentActivity, Class<?> destinationClass, Bundle extras) {
+        navigateTo(currentActivity, destinationClass, extras, false);
     }
     
     /**
-     * Navigate to network details screen
+     * Navigate to a new activity, optionally finishing the current one
+     * 
+     * @param currentActivity Current activity
+     * @param destinationClass Destination activity class
+     * @param extras Bundle of extras to pass to the new activity
+     * @param finishCurrent Whether to finish the current activity
      */
-    public static void navigateToNetworkDetails(Context context, String networkId) {
-        // For future implementation - currently just shows a toast
-        Toast.makeText(context, "Network details will be implemented in a future update", Toast.LENGTH_SHORT).show();
+    public static void navigateTo(Activity currentActivity, Class<?> destinationClass, 
+                                 Bundle extras, boolean finishCurrent) {
+        Intent intent = new Intent(currentActivity, destinationClass);
+        
+        if (extras != null) {
+            intent.putExtras(extras);
+        }
+        
+        currentActivity.startActivity(intent);
+        
+        if (finishCurrent) {
+            currentActivity.finish();
+        }
     }
     
     /**
-     * Navigate to add new network screen
+     * Navigate to a new activity and clear the back stack
+     * 
+     * @param currentActivity Current activity
+     * @param destinationClass Destination activity class
      */
-    public static void navigateToAddNetwork(Context context) {
-        // For future implementation - currently just shows a toast
-        Toast.makeText(context, "Add network will be implemented in a future update", Toast.LENGTH_SHORT).show();
+    public static void navigateToAndClearStack(Activity currentActivity, Class<?> destinationClass) {
+        navigateToAndClearStack(currentActivity, destinationClass, null);
+    }
+    
+    /**
+     * Navigate to a new activity with extras and clear the back stack
+     * 
+     * @param currentActivity Current activity
+     * @param destinationClass Destination activity class
+     * @param extras Bundle of extras to pass to the new activity
+     */
+    public static void navigateToAndClearStack(Activity currentActivity, Class<?> destinationClass, Bundle extras) {
+        Intent intent = new Intent(currentActivity, destinationClass);
+        
+        if (extras != null) {
+            intent.putExtras(extras);
+        }
+        
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        currentActivity.startActivity(intent);
+        currentActivity.finish();
     }
 }
