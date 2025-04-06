@@ -1,0 +1,62 @@
+<resources>
+    <string name="app_name">Multi-WiFi Connector</string>
+    
+    <!-- General -->
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="next">Next</string>
+    <string name="back">Back</string>
+    <string name="skip">Skip</string>
+    <string name="get_started">Get Started</string>
+    
+    <!-- Splash Screen -->
+    <string name="initializing">Initializing…</string>
+    <string name="detecting_capabilities">Detecting device capabilities…</string>
+    
+    <!-- Onboarding -->
+    <string name="onboarding_image_description">Onboarding illustration</string>
+    <string name="welcome_title">Welcome to Multi-WiFi</string>
+    <string name="welcome_description">Combine multiple WiFi networks to enhance your connection speed.</string>
+    <string name="capabilities_title">Optimized for Your Device</string>
+    <string name="capabilities_description">We automatically detect your device capabilities to provide the best connection method.</string>
+    <string name="permissions_title">Permissions Needed</string>
+    <string name="permissions_description">We need a few permissions to scan for networks and establish connections.</string>
+    <string name="ready_title">Ready to Go!</string>
+    <string name="ready_description">You\'re all set to experience faster internet with combined WiFi networks.</string>
+    <string name="background_location_title">Background Location Access</string>
+    <string name="background_location_message">Multi-WiFi Connector needs background location access to detect and connect to WiFi networks even when the app is not in use.</string>
+    <string name="permissions_required_title">Permissions Required</string>
+    <string name="permissions_required_message">These permissions are necessary for the app to function properly.</string>
+    <string name="permissions_required_settings_message">Please enable the required permissions in Settings to continue using all features.</string>
+    <string name="go_to_settings">Go to Settings</string>
+    
+    <!-- Dashboard -->
+    <string name="status">Status</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="combined_speed">Combined Speed</string>
+    <string name="combined_speed_format">%.1f Mbps</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="connected_networks">Connected Networks</string>
+    <string name="add_network">Add Network</string>
+    <string name="speed">Speed:</string>
+    <string name="latency">Latency:</string>
+    <string name="allocation">Allocation:</string>
+    <string name="network_icon_description">Network type icon</string>
+    
+    <!-- Settings -->
+    <string name="settings">Settings</string>
+    <string name="help">Help</string>
+    <string name="about">About</string>
+    <string name="load_balancing">Load Balancing</string>
+    <string name="auto_connect">Auto Connect</string>
+    <string name="connection_method">Connection Method</string>
+    
+    <!-- Network Operations -->
+    <string name="scanning">Scanning for networks…</string>
+    <string name="connecting">Connecting…</string>
+    <string name="disconnecting">Disconnecting…</string>
+    <string name="connection_successful">Connection successful</string>
+    <string name="connection_failed">Connection failed</string>
+</resources>

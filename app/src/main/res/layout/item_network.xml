@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="8dp"
+    app:cardCornerRadius="8dp"
+    app:cardElevation="2dp">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="16dp">
+
+        <ImageView
+            android:id="@+id/network_icon"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="@string/network_icon_description"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:src="@drawable/wifi_icon" />
+
+        <TextView
+            android:id="@+id/network_name"
+            style="@style/SubtitleText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="8dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toEndOf="@id/network_icon"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:text="WiFi Network Name" />
+
+        <TextView
+            android:id="@+id/speed_label"
+            style="@style/CaptionText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="8dp"
+            android:text="@string/speed"
+            app:layout_constraintStart_toEndOf="@id/network_icon"
+            app:layout_constraintTop_toBottomOf="@id/network_name" />
+
+        <TextView
+            android:id="@+id/speed_value"
+            style="@style/CaptionText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            app:layout_constraintBottom_toBottomOf="@id/speed_label"
+            app:layout_constraintStart_toEndOf="@id/speed_label"
+            app:layout_constraintTop_toTopOf="@id/speed_label"
+            tools:text="25.5 Mbps" />
+
+        <TextView
+            android:id="@+id/latency_label"
+            style="@style/CaptionText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:text="@string/latency"
+            app:layout_constraintStart_toEndOf="@id/speed_value"
+            app:layout_constraintTop_toTopOf="@id/speed_label" />
+
+        <TextView
+            android:id="@+id/latency_value"
+            style="@style/CaptionText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            app:layout_constraintBottom_toBottomOf="@id/latency_label"
+            app:layout_constraintStart_toEndOf="@id/latency_label"
+            app:layout_constraintTop_toTopOf="@id/latency_label"
+            tools:text="15 ms" />
+
+        <TextView
+            android:id="@+id/allocation_label"
+            style="@style/CaptionText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/allocation"
+            app:layout_constraintStart_toStartOf="@id/speed_label"
+            app:layout_constraintTop_toBottomOf="@id/speed_label" />
+
+        <TextView
+            android:id="@+id/allocation_value"
+            style="@style/CaptionText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            app:layout_constraintBottom_toBottomOf="@id/allocation_label"
+            app:layout_constraintStart_toEndOf="@id/allocation_label"
+            app:layout_constraintTop_toTopOf="@id/allocation_label"
+            tools:text="60%" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</androidx.cardview.widget.CardView>
